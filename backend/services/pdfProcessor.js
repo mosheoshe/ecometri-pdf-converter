@@ -1,171 +1,147 @@
-const { PDFDocument } = require('pdf-lib');
 const pdfParse = require('pdf-parse');
-const { uploadImagesToCloudinary } = require('./cloudinaryService');
-const { enhanceProductWithAI } = require('./geminiService');
+const { PDFDocument } = require('pdf-lib');
 const { v4: uuidv4 } = require('uuid');
 
+/**
+ * Process complete PDF: extract text, images, and detect products
+ */
 async function processFullPDF(pdfBuffer) {
   const batchId = uuidv4();
-
-  try {
-    const pdfDoc = await PDFDocument.load(pdfBuffer);
-    const pdfData = await pdfParse(pdfBuffer);
-    const allText = pdfData.text;
-
-    const images = await extractImagesFromPDF(pdfDoc);
-    const imageUrls = await uploadImagesToCloudinary(images, batchId);
-
-    const products = detectProducts(allText, pdfDoc.getPageCount());
-    assignImagesToProducts(products, imageUrls);
-
-    for (let product of products) {
-      if (!product.name || product.name.length < 10) {
-        const enhanced = await enhanceProductWithAI(product);
-        if (enhanced.title) product.name = enhanced.title;
-        if (enhanced.description) product.description = enhanced.description;
-      }
-    }
-
-    const warnings = validateProducts(products);
-
-    return {
-      success: true,
-      batchId,
-      products,
-      stats: {
-        imagesExtracted: images.length,
-        imagesUploaded: imageUrls.length
-      },
-      warnings
-    };
-
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
+  
+  // Extract text
+  const textData = await pdfParse(pdfBuffer);
+  const fullText = textData.text;
+  
+  // Extract images
+  const images = await extractImagesFromPDF(pdfBuffer);
+  
+  // Detect products from text
+  const products = detectProducts(fullText);
+  
+  // Assign images to products (1 image per product)
+  const productsWithImages = products.map((product, index) => ({
+    ...product,
+    imageBase64: images[index] || null,
+    batchId
+  }));
+  
+  return {
+    products: productsWithImages,
+    totalProducts: productsWithImages.length,
+    totalImages: images.length,
+    batchId
+  };
 }
 
-async function extractImagesFromPDF(pdfDoc) {
+/**
+ * Extract images from PDF as base64
+ */
+async function extractImagesFromPDF(pdfBuffer) {
   const images = [];
-  const pages = pdfDoc.getPages();
   
-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-    const page = pages[pageIndex];
-    try {
-      const resources = page.node.Resources();
-      if (!resources) continue;
+  try {
+    const pdfDoc = await PDFDocument.load(pdfBuffer);
+    const pages = pdfDoc.getPages();
+    
+    for (const page of pages) {
+      const { Resources } = page.node;
       
-      const xObjects = resources.lookup('XObject');
+      if (!Resources) continue;
+      
+      const xObjects = Resources.lookup('XObject');
       if (!xObjects) continue;
       
-      const xObjectKeys = xObjects.keys();
+      const xObjectKeys = xObjects.entries();
       
-      for (const key of xObjectKeys) {
+      for (const [key, xObject] of xObjectKeys) {
+        if (!xObject || typeof xObject.lookup !== 'function') continue;
+        
+        const subtype = xObject.lookup('Subtype');
+        if (!subtype || subtype.toString() !== '/Image') continue;
+        
         try {
-          const xObject = xObjects.lookup(key);
-          if (!xObject) continue;
+          const width = xObject.lookup('Width');
+          const height = xObject.lookup('Height');
           
-          const subtype = xObject.lookup('Subtype');
-          if (subtype && subtype.toString() === '/Image') {
-            const imageStream = xObject.lookup('stream') || xObject;
-            const imageBytes = imageStream.contents || imageStream;
+          // Only extract reasonable-sized images (likely product images)
+          if (width && height && width > 50 && height > 50) {
+            const colorSpace = xObject.lookup('ColorSpace');
+            const bitsPerComponent = xObject.lookup('BitsPerComponent');
+            const filter = xObject.lookup('Filter');
             
-            if (imageBytes && imageBytes.length > 0) {
-              const buffer = Buffer.isBuffer(imageBytes) ? imageBytes : Buffer.from(imageBytes);
-              images.push({ data: buffer, page: pageIndex + 1 });
+            // Extract image bytes
+            let imageBytes;
+            if (filter && filter.toString() === '/DCTDecode') {
+              // JPEG image
+              imageBytes = xObject.lookup('stream');
+            } else if (filter && filter.toString() === '/FlateDecode') {
+              // PNG-like compressed image
+              imageBytes = xObject.lookup('stream');
+            }
+            
+            if (imageBytes) {
+              // Convert to base64
+              const base64 = Buffer.from(imageBytes).toString('base64');
+              const mimeType = filter.toString() === '/DCTDecode' ? 'image/jpeg' : 'image/png';
+              const dataUrl = `data:${mimeType};base64,${base64}`;
+              
+              images.push(dataUrl);
             }
           }
-        } catch (err) {
+        } catch (imgError) {
+          console.warn('Error extracting individual image:', imgError.message);
           continue;
         }
       }
-    } catch (err) {
-      continue;
     }
+  } catch (error) {
+    console.error('Error extracting images from PDF:', error);
   }
   
   return images;
 }
 
+/**
+ * Detect products from PDF text
+ */
 function detectProducts(text) {
   const products = [];
-  const lines = text.split('\n').filter(l => l.trim());
   
-  const skuPatterns = [
-    /\b(KA-[A-Z0-9/-]+)\b/g,
-    /\b(UK-[A-Z0-9-]+)\b/g,
-    /\b(MK-[A-Z0-9/-]+)\b/g,
-    /\b(UBASS-[A-Z0-9-]+)\b/g,
-    /\b([A-Z]{2,4}-[A-Z0-9/-]{3,})\b/g
-  ];
+  // Split by common product separators
+  const lines = text.split('\n').filter(line => line.trim().length > 10);
   
-  let currentCategory = 'Sin categoría';
-  const seenSkus = new Set();
+  // Simple heuristic: look for lines that might be product titles
+  // (lines with reasonable length, not too short, not too long)
+  const potentialProducts = lines.filter(line => {
+    const length = line.trim().length;
+    return length >= 15 && length <= 200 && /[a-zA-Z]/.test(line);
+  });
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    if (line === line.toUpperCase() && line.length < 60 && line.length > 3) {
-      currentCategory = toTitleCase(line);
-    }
-    
-    let foundSku = null;
-    for (const pattern of skuPatterns) {
-      const matches = line.matchAll(pattern);
-      for (const match of matches) {
-        const sku = match[1];
-        if (!seenSkus.has(sku)) {
-          foundSku = sku;
-          seenSkus.add(sku);
-          break;
-        }
-      }
-      if (foundSku) break;
-    }
-    
-    if (foundSku) {
-      let name = line.replace(foundSku, '').trim();
-      products.push({
-        sku: foundSku,
-        name: name || foundSku,
-        description: name.substring(0, 200),
-        category: currentCategory,
-        price: '',
-        imageUrls: []
-      });
-    }
+  // Create product entries
+  potentialProducts.forEach((line, index) => {
+    products.push({
+      rawTitle: line.trim(),
+      rawDescription: '', // Will be enhanced by Gemini
+      detectedFromPDF: true,
+      pageInfo: `Product ${index + 1}`
+    });
+  });
+  
+  // If no products detected, create at least one from the full text
+  if (products.length === 0) {
+    products.push({
+      rawTitle: text.substring(0, 100).trim(),
+      rawDescription: text.substring(100, 500).trim(),
+      detectedFromPDF: true,
+      pageInfo: 'Full document'
+    });
   }
   
   return products;
 }
 
-function assignImagesToProducts(products, imageUrls) {
-  if (imageUrls.length === 0) return;
-  
-  const imagesPerProduct = Math.max(1, Math.floor(imageUrls.length / products.length));
-  let imageIndex = 0;
-  
-  for (const product of products) {
-    const productImages = [];
-    for (let i = 0; i < Math.min(4, imagesPerProduct); i++) {
-      if (imageIndex < imageUrls.length) {
-        productImages.push(imageUrls[imageIndex++]);
-      }
-    }
-    product.imageUrls = productImages;
-  }
-}
-
-function validateProducts(products) {
-  const warnings = { missing_price: 0, no_images: 0 };
-  for (const product of products) {
-    if (!product.price) warnings.missing_price++;
-    if (product.imageUrls.length === 0) warnings.no_images++;
-  }
-  return warnings;
-}
-
-function toTitleCase(str) {
-  return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-}
-
-module.exports = { processFullPDF };
+module.exports = {
+  processFullPDF,
+  extractImagesFromPDF,
+  detectProducts
+};
