@@ -23,6 +23,9 @@ async function scrapeStore(storeUrl) {
     let products = [];
     
     switch (platform) {
+      case 'ecometri':
+        products = extractEcometriProducts(html, storeUrl);
+        break;
       case 'shopify':
         products = await extractShopifyProducts(storeUrl);
         break;
@@ -62,6 +65,15 @@ async function detectPlatform(url) {
   try {
     const html = await fetchHTML(url);
     const $ = cheerio.load(html);
+    
+    // Check for Ecometri
+    if (url.includes('ecometri.shop') || 
+        url.includes('ecometri.com') ||
+        html.includes('ecometri') ||
+        $('meta[content*="Ecometri"]').length > 0 ||
+        $('[class*="ecometri"]').length > 0) {
+      return 'ecometri';
+    }
     
     // Check for Shopify
     if (html.includes('Shopify.theme') || 
@@ -105,6 +117,8 @@ async function fetchHTML(url) {
         'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
       },
       timeout: 30000,
       maxRedirects: 5
@@ -115,6 +129,142 @@ async function fetchHTML(url) {
     console.error('Error fetching HTML:', error.message);
     throw new Error(`Failed to fetch URL: ${error.message}`);
   }
+}
+
+/**
+ * Extract Ecometri products
+ */
+function extractEcometriProducts(html, baseUrl) {
+  const $ = cheerio.load(html);
+  const products = [];
+  
+  console.log('🔍 Extracting Ecometri products...');
+  
+  // Ecometri product selectors (try multiple patterns)
+  const productSelectors = [
+    '.product-item',
+    '.product-card',
+    '[data-product]',
+    '.item-product',
+    'article.product',
+    '[class*="product-"]',
+    '.product',
+    '[itemtype*="Product"]'
+  ];
+  
+  let productElements = $();
+  for (const selector of productSelectors) {
+    productElements = $(selector);
+    if (productElements.length > 0) {
+      console.log(`✅ Found ${productElements.length} products with selector: ${selector}`);
+      break;
+    }
+  }
+  
+  // Fallback: buscar por estructura común
+  if (productElements.length === 0) {
+    console.log('⚠️ Standard selectors failed, trying fallback method...');
+    productElements = $('div, article, li').filter(function() {
+      const $elem = $(this);
+      return $elem.find('img').length > 0 && 
+             ($elem.find('[class*="title"]').length > 0 || 
+              $elem.find('[class*="name"]').length > 0 ||
+              $elem.find('h1, h2, h3, h4').length > 0) &&
+             ($elem.find('[class*="price"]').length > 0 ||
+              $elem.find('[class*="precio"]').length > 0);
+    });
+    console.log(`Found ${productElements.length} products with fallback method`);
+  }
+  
+  productElements.each((index, element) => {
+    const $product = $(element);
+    
+    // Extract title
+    const title = $product.find('[class*="title"], [class*="name"], [class*="nombre"], h1, h2, h3, h4').first().text().trim() ||
+                  $product.find('a').first().attr('title') ||
+                  $product.find('a').first().text().trim() || '';
+    
+    // Extract description
+    const description = $product.find('[class*="description"], [class*="desc"], [class*="descripcion"], p').first().text().trim() || title;
+    
+    // Extract price
+    const priceText = $product.find('[class*="price"], [class*="precio"], [class*="valor"], [class*="cost"]').first().text().trim();
+    
+    // Extract image
+    const image = $product.find('img').first().attr('src') || 
+                  $product.find('img').first().attr('data-src') ||
+                  $product.find('img').first().attr('data-lazy') ||
+                  $product.find('img').first().attr('data-original');
+    
+    // Extract link
+    const link = $product.find('a').first().attr('href') ||
+                 $product.closest('a').attr('href');
+    
+    if (title && title.length > 3) {
+      products.push({
+        rawTitle: title,
+        rawDescription: description || title,
+        price: extractPrice(priceText) || '0',
+        imageUrl: makeAbsoluteUrl(image, baseUrl),
+        images: [makeAbsoluteUrl(image, baseUrl)],
+        sourceUrl: makeAbsoluteUrl(link, baseUrl),
+        detectedFromWeb: true,
+        platform: 'ecometri'
+      });
+    }
+  });
+  
+  // Si no encontró nada, intentar método super agresivo
+  if (products.length === 0) {
+    console.log('⚠️ No products found, trying AGGRESSIVE extraction...');
+    
+    $('img').each((index, img) => {
+      if (index > 200) return false; // Limit to first 200 images
+      
+      const $img = $(img);
+      const $parent = $img.closest('div, article, li, section, a');
+      
+      // Skip if parent is too small (likely not a product)
+      if ($parent.text().trim().length < 10) return;
+      
+      const title = $parent.find('h1, h2, h3, h4, h5, [class*="title"], [class*="name"], [class*="nombre"]').first().text().trim() ||
+                    $parent.find('a').first().text().trim() ||
+                    $parent.find('strong, b').first().text().trim();
+      
+      const priceText = $parent.find('[class*="price"], [class*="precio"], [class*="valor"], [class*="cost"]').first().text().trim();
+      const image = $img.attr('src') || $img.attr('data-src') || $img.attr('data-lazy');
+      const link = $parent.is('a') ? $parent.attr('href') : $parent.find('a').first().attr('href');
+      
+      if (title && title.length > 5 && title.length < 200 && image) {
+        products.push({
+          rawTitle: title,
+          rawDescription: title,
+          price: extractPrice(priceText) || '0',
+          imageUrl: makeAbsoluteUrl(image, baseUrl),
+          images: [makeAbsoluteUrl(image, baseUrl)],
+          sourceUrl: makeAbsoluteUrl(link, baseUrl),
+          detectedFromWeb: true,
+          platform: 'ecometri'
+        });
+      }
+    });
+  }
+  
+  // Remove duplicates
+  const uniqueProducts = [];
+  const seen = new Set();
+  
+  for (const product of products) {
+    const key = product.rawTitle.toLowerCase().trim();
+    if (!seen.has(key) && product.rawTitle.length > 3) {
+      seen.add(key);
+      uniqueProducts.push(product);
+    }
+  }
+  
+  console.log(`✅ Extracted ${uniqueProducts.length} unique products from Ecometri`);
+  
+  return uniqueProducts;
 }
 
 /**
