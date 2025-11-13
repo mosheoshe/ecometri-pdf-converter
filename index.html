@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ecometri PDF to CSV Converter</title>
+    <title>Ecometri Multi-Source Converter</title>
     <style>
         * {
             margin: 0;
@@ -25,7 +25,7 @@
             background: white;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 600px;
+            max-width: 700px;
             width: 100%;
             padding: 40px;
         }
@@ -46,6 +46,45 @@
             font-size: 16px;
         }
 
+        /* TABS */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            font-weight: 600;
+            color: #999;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* PDF UPLOAD AREA */
         .upload-area {
             border: 3px dashed #667eea;
             border-radius: 15px;
@@ -84,6 +123,39 @@
 
         #fileInput {
             display: none;
+        }
+
+        /* STORE URL INPUT */
+        .url-input-area {
+            margin-bottom: 20px;
+        }
+
+        .url-input-area label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .url-input-area input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .url-input-area input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .url-input-area .hint {
+            color: #999;
+            font-size: 13px;
+            margin-top: 8px;
         }
 
         .file-info {
@@ -261,42 +333,60 @@
             margin-right: 10px;
             font-size: 20px;
         }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .spinner {
-            display: inline-block;
-            animation: spin 1s linear infinite;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 Ecometri PDF Converter</h1>
-            <p>Convierte catálogos PDF a CSV con imágenes optimizadas e IA</p>
+            <h1>🚀 Ecometri Converter</h1>
+            <p>Convierte catálogos a CSV con imágenes optimizadas</p>
         </div>
 
-        <div class="upload-area" id="uploadArea">
-            <div class="upload-icon">📄</div>
-            <div class="upload-text">Arrastra tu PDF aquí o haz clic para seleccionar</div>
-            <div class="upload-subtext">Máximo 50MB</div>
+        <!-- TABS -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('pdf')">📄 PDF</button>
+            <button class="tab" onclick="switchTab('scraper')">🕷️ Web Scraper</button>
         </div>
 
-        <input type="file" id="fileInput" accept=".pdf">
+        <!-- TAB 1: PDF UPLOAD -->
+        <div id="tab-pdf" class="tab-content active">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">Arrastra tu PDF aquí o haz clic para seleccionar</div>
+                <div class="upload-subtext">Máximo 50MB</div>
+            </div>
 
-        <div class="file-info" id="fileInfo">
-            <div class="file-name" id="fileName"></div>
-            <div class="file-size" id="fileSize"></div>
+            <input type="file" id="fileInput" accept=".pdf">
+
+            <div class="file-info" id="fileInfo">
+                <div class="file-name" id="fileName"></div>
+                <div class="file-size" id="fileSize"></div>
+            </div>
+
+            <button class="btn btn-primary" id="processBtn" disabled>
+                Procesar PDF y Generar CSV
+            </button>
         </div>
 
-        <button class="btn btn-primary" id="processBtn" disabled>
-            Procesar PDF y Generar CSV
-        </button>
+        <!-- TAB 2: WEB SCRAPER -->
+        <div id="tab-scraper" class="tab-content">
+            <div class="url-input-area">
+                <label for="storeUrlInput">🌐 URL de la Tienda</label>
+                <input 
+                    type="url" 
+                    id="storeUrlInput" 
+                    placeholder="https://ejemplo.com/tienda"
+                    onkeypress="if(event.key==='Enter') scrapeStore()"
+                >
+                <div class="hint">Soporta: Shopify, WooCommerce, y tiendas genéricas</div>
+            </div>
 
+            <button class="btn btn-primary" id="scrapeBtn" onclick="scrapeStore()">
+                🕷️ Scrape Tienda y Generar CSV
+            </button>
+        </div>
+
+        <!-- PROGRESS (compartido por ambos tabs) -->
         <div class="progress-area" id="progressArea">
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill">0%</div>
@@ -304,6 +394,7 @@
             <div class="status-text" id="statusText">Iniciando...</div>
         </div>
 
+        <!-- RESULTS (compartido) -->
         <div class="result-area" id="resultArea">
             <div class="result-title">✅ ¡Proceso Completado!</div>
             <div class="result-stats">
@@ -316,8 +407,8 @@
                     <div class="stat-label">Imágenes</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" id="aiEnhanced">0</div>
-                    <div class="stat-label">Mejorados con IA</div>
+                    <div class="stat-value" id="platform">-</div>
+                    <div class="stat-label">Plataforma</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value">1080px</div>
@@ -329,23 +420,25 @@
             </button>
         </div>
 
+        <!-- ERROR (compartido) -->
         <div class="error-area" id="errorArea">
             <div class="error-title">❌ Error</div>
             <div class="error-message" id="errorMessage"></div>
         </div>
 
+        <!-- FEATURES -->
         <div class="features">
             <div class="feature-item">
                 <span class="feature-icon">✅</span>
-                <span>Extracción automática de productos e imágenes</span>
+                <span>Extracción automática de productos</span>
             </div>
             <div class="feature-item">
                 <span class="feature-icon">🖼️</span>
                 <span>Optimización a 1080x1080px en formato WebP</span>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">🤖</span>
-                <span>Títulos y descripciones generados con IA (Gemini)</span>
+                <span class="feature-icon">🕷️</span>
+                <span>Web Scraper para Shopify, WooCommerce y más</span>
             </div>
             <div class="feature-item">
                 <span class="feature-icon">📊</span>
@@ -357,34 +450,47 @@
     <script>
         const API_URL = 'https://ecometri-pdf-backend.onrender.com';
         
+        let selectedFile = null;
+        let csvData = null;
+        let csvFilename = null;
+
+        // TAB SWITCHING
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            
+            // Reset UI
+            resetUI();
+        }
+
+        function resetUI() {
+            document.getElementById('progressArea').classList.remove('show');
+            document.getElementById('resultArea').classList.remove('show');
+            document.getElementById('errorArea').classList.remove('show');
+        }
+
+        // ==========================================
+        // PDF UPLOAD LOGIC
+        // ==========================================
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const fileSize = document.getElementById('fileSize');
         const processBtn = document.getElementById('processBtn');
-        const progressArea = document.getElementById('progressArea');
-        const progressFill = document.getElementById('progressFill');
-        const statusText = document.getElementById('statusText');
-        const resultArea = document.getElementById('resultArea');
-        const errorArea = document.getElementById('errorArea');
-        const errorMessage = document.getElementById('errorMessage');
-        const downloadBtn = document.getElementById('downloadBtn');
 
-        let selectedFile = null;
-        let csvData = null;
-        let csvFilename = null;
-
-        // Upload area click
         uploadArea.addEventListener('click', () => fileInput.click());
 
-        // File selection
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) handleFileSelect(file);
         });
 
-        // Drag and drop
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.classList.add('dragover');
@@ -411,21 +517,18 @@
             fileSize.textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB`;
             fileInfo.classList.add('show');
             processBtn.disabled = false;
-            resultArea.classList.remove('show');
-            errorArea.classList.remove('show');
+            resetUI();
         }
 
-        // Process button
+        // Process PDF
         processBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
             processBtn.disabled = true;
-            progressArea.classList.add('show');
-            resultArea.classList.remove('show');
-            errorArea.classList.remove('show');
+            document.getElementById('progressArea').classList.add('show');
+            resetUI();
 
             try {
-                // Step 1: Upload
                 updateProgress(10, '📤 Subiendo PDF...');
                 
                 const formData = new FormData();
@@ -442,7 +545,7 @@
                     throw new Error(`Error del servidor: ${response.status}`);
                 }
 
-                updateProgress(60, '☁️ Subiendo imágenes a Cloudinary...');
+                updateProgress(60, '☁️ Subiendo imágenes...');
 
                 const result = await response.json();
 
@@ -450,33 +553,101 @@
                     throw new Error(result.error || 'Error desconocido');
                 }
 
-                updateProgress(80, '🤖 Mejorando con IA...');
-
-                await new Promise(resolve => setTimeout(resolve, 1000));
-
                 updateProgress(100, '✅ ¡Completado!');
 
-                // Show results
-                csvData = result.csv;
-                csvFilename = result.metadata.filename;
-
-                document.getElementById('totalProducts').textContent = result.report.totalProducts;
-                document.getElementById('totalImages').textContent = result.report.productsWithImages;
-                document.getElementById('aiEnhanced').textContent = result.report.productsEnhancedByAI;
-
-                resultArea.classList.add('show');
-                progressArea.classList.remove('show');
+                showResults(result);
 
             } catch (error) {
                 console.error('Error:', error);
                 showError(error.message);
-                progressArea.classList.remove('show');
+                document.getElementById('progressArea').classList.remove('show');
                 processBtn.disabled = false;
             }
         });
 
-        // Download button
-        downloadBtn.addEventListener('click', () => {
+        // ==========================================
+        // WEB SCRAPER LOGIC
+        // ==========================================
+        async function scrapeStore() {
+            const storeUrl = document.getElementById('storeUrlInput').value.trim();
+            
+            if (!storeUrl) {
+                showError('Por favor ingresa una URL de tienda');
+                return;
+            }
+
+            const scrapeBtn = document.getElementById('scrapeBtn');
+            scrapeBtn.disabled = true;
+            document.getElementById('progressArea').classList.add('show');
+            resetUI();
+
+            try {
+                updateProgress(10, '🕷️ Conectando a la tienda...');
+
+                const response = await fetch(`${API_URL}/api/scrape-store`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ storeUrl })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error del servidor: ${response.status}`);
+                }
+
+                updateProgress(40, '🔍 Extrayendo productos...');
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.error || 'Error desconocido');
+                }
+
+                updateProgress(70, '☁️ Procesando imágenes...');
+                
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                updateProgress(100, '✅ ¡Completado!');
+
+                showResults(result);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showError(error.message);
+                document.getElementById('progressArea').classList.remove('show');
+                scrapeBtn.disabled = false;
+            }
+        }
+
+        // ==========================================
+        // SHARED UI FUNCTIONS
+        // ==========================================
+        function showResults(result) {
+            csvData = result.csv;
+            csvFilename = result.metadata?.filename || 'ecometri_catalog.csv';
+
+            document.getElementById('totalProducts').textContent = result.report?.total_products || 0;
+            document.getElementById('totalImages').textContent = result.report?.products_with_images || result.report?.images_uploaded || 0;
+            document.getElementById('platform').textContent = result.report?.platform_detected || 'PDF';
+
+            document.getElementById('resultArea').classList.add('show');
+            document.getElementById('progressArea').classList.remove('show');
+        }
+
+        function updateProgress(percent, status) {
+            document.getElementById('progressFill').style.width = `${percent}%`;
+            document.getElementById('progressFill').textContent = `${percent}%`;
+            document.getElementById('statusText').textContent = status;
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorArea').classList.add('show');
+        }
+
+        // Download CSV
+        document.getElementById('downloadBtn').addEventListener('click', () => {
             if (!csvData) return;
 
             const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
@@ -485,17 +656,6 @@
             link.download = csvFilename || 'ecometri_catalog.csv';
             link.click();
         });
-
-        function updateProgress(percent, status) {
-            progressFill.style.width = `${percent}%`;
-            progressFill.textContent = `${percent}%`;
-            statusText.textContent = status;
-        }
-
-        function showError(message) {
-            errorMessage.textContent = message;
-            errorArea.classList.add('show');
-        }
     </script>
 </body>
 </html>
