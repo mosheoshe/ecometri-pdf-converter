@@ -22,7 +22,7 @@ async function enhanceProductWithAI(rawTitle, rawDescription = '', imageContext 
       };
     }
     
-    const model = ai.getGenerativeModel({ model: 'gemini-pro' });
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
     const prompt = `
 Eres un experto en redacción de catálogos de productos para e-commerce.
@@ -63,7 +63,7 @@ Responde SOLO con el JSON, sin texto adicional.
         title: parsed.title.substring(0, 80),
         description: parsed.description.substring(0, 500),
         enhanced: true,
-        aiModel: 'gemini-pro'
+        aiModel: 'gemini-1.5-flash'
       };
     }
     
